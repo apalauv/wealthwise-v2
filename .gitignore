@@ -49,3 +49,12 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Database files (SQLite)
+*.db
+*.db-journal
+db/
+
+# Temporary files
+check-db.js
+worklog.md

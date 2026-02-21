@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,20 +10,109 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// Asset types
+model Asset {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // cash, crypto, defi, etf, fund, venture, real_estate
+  quantity    Float
+  buyPrice    Float    // Price per unit at purchase
+  currentPrice Float   @default(0) // Current price per unit
+  currency    String   @default("EUR")
+  symbol      String?  // For stocks, ETFs, crypto
+  description String?
+  platform    String?  // Exchange, bank, platform
+  wallet      String?  // For crypto wallets
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  history     AssetHistory[]
 }
 
-model Post {
+model AssetHistory {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  price     Float
+  date      DateTime @default(now())
+}
+
+// Monthly snapshots for tracking net worth over time
+model MonthlySnapshot {
+  id              String   @id @default(cuid())
+  date            DateTime @default(now())
+  totalPatrimony  Float
+  cashValue       Float    @default(0)
+  cryptoValue     Float    @default(0)
+  defiValue       Float    @default(0)
+  etfValue        Float    @default(0)
+  fundValue       Float    @default(0)
+  ventureValue    Float    @default(0)
+  realEstateValue Float    @default(0)
+  notes           String?
+  createdAt       DateTime @default(now())
+}
+
+// Tasks
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  category    String?  // crypto, investment, personal, etc.
+  priority    String   @default("medium") // low, medium, high
+  status      String   @default("pending") // pending, in_progress, completed
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Goals
+model Goal {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  targetAmount Float
+  currentAmount Float @default(0)
+  deadline    DateTime?
+  category    String?  // savings, investment, retirement, etc.
+  status      String   @default("active") // active, completed, cancelled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Transactions / Events (Efemérides)
+model Transaction {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  amount      Float
+  type        String   // income, expense, investment, dividend, etc.
+  category    String?
+  date        DateTime @default(now())
+  assetId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Whale tracking
+model Whale {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  walletAddress String?
+  holdings      String?  // JSON string of holdings
+  notes         String?
+  lastUpdated   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Settings
+model Settings {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
 }
