@@ -7,14 +7,21 @@ export async function GET() {
     const assetCount = await db.asset.count()
     const taskCount = await db.task.count()
     const goalCount = await db.goal.count()
+    const transactionCount = await db.transaction.count()
+    const snapshotCount = await db.monthlySnapshot.count()
+    const whaleCount = await db.whale.count()
 
     return NextResponse.json({
       success: true,
-      message: 'Database connected successfully',
+      message: 'Database connected successfully!',
+      timestamp: new Date().toISOString(),
       counts: {
         assets: assetCount,
         tasks: taskCount,
-        goals: goalCount
+        goals: goalCount,
+        transactions: transactionCount,
+        snapshots: snapshotCount,
+        whales: whaleCount
       }
     })
   } catch (error) {
@@ -22,7 +29,10 @@ export async function GET() {
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      hint: 'The database tables may not exist. Make sure to run prisma db push or migrate.'
+      hint: 'The database tables may not exist. Make sure to run prisma db push or migrate.',
+      timestamp: new Date().toISOString()
     }, { status: 500 })
   }
 }
+
+export const dynamic = 'force-dynamic'
