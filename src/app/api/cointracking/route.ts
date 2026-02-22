@@ -22,6 +22,7 @@ interface CointrackingResponse {
     totalGainLoss: number
     items: Array<{
       symbol: string
+      name: string
       amount: number
       valueEUR: number
       valueUSD: number
@@ -45,13 +46,14 @@ function generateSignature(apiKey: string, apiSecret: string, params: Record<str
 }
 
 async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
-  const apiKey = process.env.COINTRACKING_API_KEY
-  const apiSecret = process.env.COINTRACKING_API_SECRET
+  // Support both naming conventions
+  const apiKey = process.env.COINTRACKING_API_KEY || process.env.NEXT_PUBLIC_COINTRACKING_API_KEY
+  const apiSecret = process.env.COINTRACKING_API_SECRET || process.env.NEXT_PUBLIC_COINTRACKING_API_SECRET
 
   if (!apiKey || !apiSecret) {
     return {
       success: false,
-      error: 'Cointracking API credentials not configured'
+      error: 'Cointracking API credentials not configured. Please add COINTRACKING_API_KEY and COINTRACKING_API_SECRET to environment variables.'
     }
   }
 
@@ -93,6 +95,7 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
 
       return {
         symbol: currency,
+        name: info.name || currency,
         amount,
         valueEUR,
         valueUSD,
