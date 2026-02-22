@@ -4,17 +4,8 @@ import crypto from 'crypto'
 // Cointracking API configuration
 const COINTRACKING_API_URL = 'https://cointracking.info/api/v1'
 
-interface CointrackingBalance {
-  Account: string
-  Amount: number
-  Value: number
-  ValueUSD: number
-  Currency: string
-}
-
 interface CointrackingResponse {
   success: boolean
-  balances?: CointrackingBalance[]
   error?: string
   summary?: {
     totalValueEUR: number
@@ -33,7 +24,8 @@ interface CointrackingResponse {
 }
 
 // Generate HMAC signature for Cointracking API
-function generateSignature(apiKey: string, apiSecret: string, params: Record<string, string>): string {
+function generateSignature(apiSecret: string, params: Record<string, string>): string {
+  // Sort params alphabetically and create query string
   const sortedParams = Object.keys(params)
     .sort()
     .map(key => `${key}=${params[key]}`)
@@ -58,51 +50,74 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
   }
 
   try {
+    // For getBalance, we need at least an empty params object
     const params: Record<string, string> = {}
-    const signature = generateSignature(apiKey, apiSecret, params)
+    const signature = generateSignature(apiSecret, params)
 
-    const response = await fetch(`${COINTRACKING_API_URL}/getBalance`, {
+    // Build form data body
+    const formData = new URLSearchParams()
+    formData.append('method', 'getBalance')
+
+    const response = await fetch(`${COINTRACKING_API_URL}/getBalance/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Key': apiKey,
         'Sign': signature
       },
-      body: new URLSearchParams(params).toString()
+      body: formData.toString()
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const errorText = await response.text()
+      console.error('Cointracking API HTTP error:', response.status, errorText)
+      return {
+        success: false,
+        error: `Cointracking API error (${response.status}): ${errorText.substring(0, 200)}`
+      }
     }
 
     const data = await response.json()
+    console.log('Cointracking API response:', JSON.stringify(data).substring(0, 500))
 
-    if (data.status !== 'success') {
+    // Check for API-level errors
+    if (data.status === 'error') {
       return {
         success: false,
-        error: data.error || 'Unknown error from Cointracking API'
+        error: data.error || 'API returned error status'
       }
     }
 
-    // Process balances
-    const items = Object.entries(data.data || {}).map(([currency, info]: [string, any]) => {
-      const amount = parseFloat(info.amount || 0)
-      const valueEUR = parseFloat(info.value_eur || info.value || 0)
-      const valueUSD = parseFloat(info.value_usd || 0)
-      const cost = parseFloat(info.cost || 0)
-      const gainLoss = valueEUR - cost
-      const gainLossPercent = cost > 0 ? ((gainLoss / cost) * 100) : 0
-
+    if (data.status !== 'success' && !data.data) {
       return {
-        symbol: currency,
-        name: info.name || currency,
-        amount,
-        valueEUR,
-        valueUSD,
-        gainLoss,
-        gainLossPercent
+        success: false,
+        error: `Unexpected response format: ${JSON.stringify(data).substring(0, 200)}`
       }
-    }).filter(item => item.amount > 0 || item.valueEUR > 0)
+    }
+
+    // Process balances - format: { BTC: { amount: "1.0", value: "50000" }, ... }
+    const balanceData = data.data || data.balances || data
+    const items = Object.entries(balanceData)
+      .filter(([currency]) => typeof balanceData[currency] === 'object')
+      .map(([currency, info]: [string, any]) => {
+        const amount = parseFloat(info.amount || info.Amount || 0)
+        const valueEUR = parseFloat(info.value_eur || info.valueEur || info.value || info.Value || 0)
+        const valueUSD = parseFloat(info.value_usd || info.valueUsd || 0)
+        const cost = parseFloat(info.cost || info.Cost || 0)
+        const gainLoss = valueEUR - cost
+        const gainLossPercent = cost > 0 ? ((gainLoss / cost) * 100) : 0
+
+        return {
+          symbol: currency,
+          name: info.name || info.Name || currency,
+          amount,
+          valueEUR,
+          valueUSD,
+          gainLoss,
+          gainLossPercent
+        }
+      })
+      .filter(item => item.amount > 0 || item.valueEUR > 0)
 
     const totalValueEUR = items.reduce((sum, item) => sum + item.valueEUR, 0)
     const totalValueUSD = items.reduce((sum, item) => sum + item.valueUSD, 0)
