@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import crypto from 'crypto'
 
 // Cointracking API configuration
-const COINTRACKING_API_URL = 'https://cointracking.info/api/v1'
+// API endpoint format: https://cointracking.info/api/v1/{method}/
+const COINTRACKING_API_BASE = 'https://cointracking.info/api/v1'
 
 interface CointrackingResponse {
   success: boolean
@@ -23,17 +24,22 @@ interface CointrackingResponse {
   }
 }
 
-// Generate HMAC signature for Cointracking API
-function generateSignature(apiSecret: string, params: Record<string, string>): string {
-  // Sort params alphabetically and create query string
-  const sortedParams = Object.keys(params)
-    .sort()
-    .map(key => `${key}=${params[key]}`)
-    .join('&')
-
+// Generate HMAC-SHA512 signature for Cointracking API
+// The signature is created from the API Secret and all POST parameters
+function generateSignature(apiSecret: string, postParams: URLSearchParams): string {
+  // Sort parameters alphabetically by key
+  const sortedParams = new URLSearchParams()
+  const keys = Array.from(postParams.keys()).sort()
+  for (const key of keys) {
+    sortedParams.append(key, postParams.get(key) || '')
+  }
+  
+  // Create the query string for signing
+  const paramString = sortedParams.toString()
+  
   return crypto
     .createHmac('sha512', apiSecret)
-    .update(sortedParams)
+    .update(paramString)
     .digest('hex')
 }
 
@@ -50,22 +56,22 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
   }
 
   try {
-    // For getBalance, we need at least an empty params object
-    const params: Record<string, string> = {}
-    const signature = generateSignature(apiSecret, params)
+    // Build POST parameters (empty for getBalance, but can include options)
+    const postParams = new URLSearchParams()
+    // No additional params needed for getBalance
+    
+    // Generate signature from POST parameters
+    const signature = generateSignature(apiSecret, postParams)
 
-    // Build form data body
-    const formData = new URLSearchParams()
-    formData.append('method', 'getBalance')
-
-    const response = await fetch(`${COINTRACKING_API_URL}/getBalance/`, {
+    // The method is in the URL path, not in the body
+    const response = await fetch(`${COINTRACKING_API_BASE}/getBalance/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Key': apiKey,
         'Sign': signature
       },
-      body: formData.toString()
+      body: postParams.toString()
     })
 
     if (!response.ok) {
@@ -84,7 +90,7 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
     if (data.status === 'error') {
       return {
         success: false,
-        error: data.error || 'API returned error status'
+        error: data.error || data.message || 'API returned error status'
       }
     }
 
