@@ -2,11 +2,8 @@ import { NextResponse } from 'next/server'
 import crypto from 'crypto'
 
 // Cointracking API configuration
-// Note: The API endpoint format may have changed. This implementation tries multiple endpoints.
-const COINTRACKING_ENDPOINTS = [
-  'https://cointracking.info/api/v1/getBalance',
-  'https://cointracking.info/api/api.php'
-]
+// URL must end with / and method goes in POST body with nonce
+const COINTRACKING_API_URL = 'https://cointracking.info/api/v1/'
 
 interface CointrackingResponse {
   success: boolean
@@ -27,11 +24,12 @@ interface CointrackingResponse {
   }
 }
 
-// Generate HMAC-SHA512 signature
-function generateSignature(apiSecret: string, data: string): string {
+// Generate HMAC-SHA512 signature for Cointracking API
+// The signature is created from the entire POST body (method + nonce + any params)
+function generateSignature(apiSecret: string, postBody: string): string {
   return crypto
     .createHmac('sha512', apiSecret)
-    .update(data)
+    .update(postBody)
     .digest('hex')
 }
 
@@ -46,52 +44,17 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
     }
   }
 
-  // Try multiple endpoints and methods
-  const attempts: { endpoint: string; method: string; status: number; response: string }[] = []
-
-  // Try v1 API endpoint
   try {
-    const signature = generateSignature(apiSecret, '')
+    // Build POST body with method and nonce (required!)
+    const nonce = Date.now()
+    const postBody = `method=getBalance&nonce=${nonce}`
     
-    const response = await fetch('https://cointracking.info/api/v1/getBalance', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Key': apiKey,
-        'Sign': signature
-      },
-      body: ''
-    })
-
-    const text = await response.text()
-    attempts.push({
-      endpoint: 'https://cointracking.info/api/v1/getBalance',
-      method: 'POST',
-      status: response.status,
-      response: text.substring(0, 200)
-    })
-
-    if (response.ok && (text.startsWith('{') || text.startsWith('['))) {
-      const data = JSON.parse(text)
-      if (data.status === 'success' || data.data) {
-        return processBalanceData(data)
-      }
-    }
-  } catch (error) {
-    attempts.push({
-      endpoint: 'https://cointracking.info/api/v1/getBalance',
-      method: 'POST',
-      status: 0,
-      response: error instanceof Error ? error.message : 'Unknown error'
-    })
-  }
-
-  // Try api.php endpoint with method parameter
-  try {
-    const postBody = 'method=getBalance'
+    // Generate signature from the entire POST body
     const signature = generateSignature(apiSecret, postBody)
-    
-    const response = await fetch('https://cointracking.info/api/api.php', {
+
+    console.log('Cointracking API request:', { postBody, signature: signature.substring(0, 20) + '...' })
+
+    const response = await fetch(COINTRACKING_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -101,71 +64,68 @@ async function fetchCointrackingBalance(): Promise<CointrackingResponse> {
       body: postBody
     })
 
-    const text = await response.text()
-    attempts.push({
-      endpoint: 'https://cointracking.info/api/api.php',
-      method: 'POST',
-      status: response.status,
-      response: text.substring(0, 200)
-    })
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Cointracking API HTTP error:', response.status, errorText)
+      return {
+        success: false,
+        error: `Cointracking API error (${response.status}): ${errorText.substring(0, 200)}`
+      }
+    }
 
-    if (response.ok && (text.startsWith('{') || text.startsWith('['))) {
-      const data = JSON.parse(text)
-      if (data.status === 'success' || data.data) {
-        return processBalanceData(data)
+    const data = await response.json()
+    console.log('Cointracking API response success:', data.success)
+
+    if (!data.success) {
+      return {
+        success: false,
+        error: data.error || data.message || 'API returned unsuccessful response'
+      }
+    }
+
+    // Process balances - format from Cointracking:
+    // { "success": 1, "details": { "BTC": { "amount": "1.0", "value_fiat": "50000", ... }, ... } }
+    const balanceData = data.details || data.data || {}
+    
+    const items = Object.entries(balanceData)
+      .filter(([, info]: [string, any]) => typeof info === 'object' && info.amount)
+      .map(([currency, info]: [string, any]) => {
+        const amount = parseFloat(info.amount || 0)
+        const valueEUR = parseFloat(info.value_fiat || 0)
+        const valueBTC = parseFloat(info.value_btc || 0)
+        // Convert BTC to USD approximation (we'll use value_fiat as EUR)
+        const valueUSD = valueEUR * 1.08 // Approximate EUR to USD
+        
+        return {
+          symbol: info.coin || currency,
+          name: currency,
+          amount,
+          valueEUR,
+          valueUSD,
+          gainLoss: 0, // Cointracking doesn't provide cost basis in getBalance
+          gainLossPercent: 0
+        }
+      })
+      .filter(item => item.amount > 0 || item.valueEUR > 0)
+      .sort((a, b) => b.valueEUR - a.valueEUR)
+
+    const totalValueEUR = items.reduce((sum, item) => sum + item.valueEUR, 0)
+    const totalValueUSD = items.reduce((sum, item) => sum + item.valueUSD, 0)
+
+    return {
+      success: true,
+      summary: {
+        totalValueEUR,
+        totalValueUSD,
+        totalGainLoss: 0,
+        items
       }
     }
   } catch (error) {
-    attempts.push({
-      endpoint: 'https://cointracking.info/api/api.php',
-      method: 'POST',
-      status: 0,
-      response: error instanceof Error ? error.message : 'Unknown error'
-    })
-  }
-
-  // All attempts failed
-  return {
-    success: false,
-    error: `Cointracking API no está disponible. Verifica que tu cuenta tenga acceso a la API (puede requerir plan Pro). Intentos: ${JSON.stringify(attempts, null, 2)}`
-  }
-}
-
-function processBalanceData(data: any): CointrackingResponse {
-  const balanceData = data.data || data.balances || data
-  const items = Object.entries(balanceData)
-    .filter(([, value]) => typeof value === 'object')
-    .map(([currency, info]: [string, any]) => {
-      const amount = parseFloat(info.amount || info.Amount || 0)
-      const valueEUR = parseFloat(info.value_eur || info.valueEur || info.value || info.Value || 0)
-      const valueUSD = parseFloat(info.value_usd || info.valueUsd || 0)
-      const cost = parseFloat(info.cost || info.Cost || 0)
-      const gainLoss = valueEUR - cost
-      const gainLossPercent = cost > 0 ? ((gainLoss / cost) * 100) : 0
-
-      return {
-        symbol: currency,
-        name: info.name || info.Name || currency,
-        amount,
-        valueEUR,
-        valueUSD,
-        gainLoss,
-        gainLossPercent
-      }
-    })
-    .filter(item => item.amount > 0 || item.valueEUR > 0)
-
-  const totalValueEUR = items.reduce((sum, item) => sum + item.valueEUR, 0)
-  const totalValueUSD = items.reduce((sum, item) => sum + item.valueUSD, 0)
-  const totalGainLoss = items.reduce((sum, item) => sum + item.gainLoss, 0)
-
-  return {
-    success: true,
-    summary: {
-      totalValueEUR,
-      totalValueUSD,
-      totalGainLoss,
-      items
+    console.error('Cointracking API error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch from Cointracking'
     }
   }
 }

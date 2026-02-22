@@ -969,14 +969,31 @@ interface CointrackingData {
   }
 }
 
-// Dedicated Crypto Page with Cointracking Integration
+// CoinGecko Market Data Types
+interface CryptoMarketData {
+  id: string
+  symbol: string
+  name: string
+  image: string
+  currentPrice: number
+  marketCap: number
+  marketCapRank: number
+  totalVolume: number
+  priceChange24h: number
+  priceChangePercentage24h: number
+  priceChangePercentage7d: number
+}
+
+// Dedicated Crypto Page with CoinGecko Real-time Prices
 function CryptoPage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [cointrackingData, setCointrackingData] = useState<CointrackingData | null>(null)
+  const [marketData, setMarketData] = useState<CryptoMarketData[]>([])
   const [loading, setLoading] = useState(true)
+  const [marketLoading, setMarketLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [activeTab, setActiveTab] = useState<'local' | 'cointracking'>('cointracking')
+  const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'cointracking'>('market')
   
   const fetchAssets = useCallback(async () => {
     try {
@@ -989,6 +1006,21 @@ function CryptoPage() {
       console.error('Error fetching assets:', error)
     } finally {
       setLoading(false)
+    }
+  }, [])
+  
+  const fetchMarketData = useCallback(async () => {
+    try {
+      setMarketLoading(true)
+      const res = await fetch('/api/crypto-market?limit=50')
+      const json = await res.json()
+      if (json.success) {
+        setMarketData(json.data)
+      }
+    } catch (error) {
+      console.error('Error fetching market data:', error)
+    } finally {
+      setMarketLoading(false)
     }
   }, [])
   
@@ -1005,18 +1037,31 @@ function CryptoPage() {
   
   useEffect(() => {
     fetchAssets()
+    fetchMarketData()
     fetchCointracking()
-  }, [fetchAssets, fetchCointracking])
+  }, [fetchAssets, fetchMarketData, fetchCointracking])
   
   const handleSyncCointracking = async () => {
     setSyncing(true)
     try {
       await fetchCointracking()
-      toast.success('Portfolio sincronizado con Cointracking')
+      toast.success('Portfolio sincronizado')
     } catch (error) {
       toast.error('Error al sincronizar')
     } finally {
       setSyncing(false)
+    }
+  }
+  
+  const handleRefreshMarket = async () => {
+    setRefreshing(true)
+    try {
+      await fetchMarketData()
+      toast.success('Precios actualizados')
+    } catch (error) {
+      toast.error('Error al actualizar')
+    } finally {
+      setRefreshing(false)
     }
   }
   
@@ -1048,6 +1093,251 @@ function CryptoPage() {
         }
         toast.success('Precios actualizados')
         fetchAssets()
+      } else {
+        toast.error('Error al obtener precios')
+      }
+    } catch (error) {
+      toast.error('Error al actualizar precios')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+  
+  const localTotalValue = assets.reduce((sum, a) => sum + a.quantity * a.currentPrice, 0)
+  const localTotalInvested = assets.reduce((sum, a) => sum + a.quantity * a.buyPrice, 0)
+  const localTotalPnL = localTotalValue - localTotalInvested
+  const localTotalPnLPercent = localTotalInvested > 0 ? (localTotalPnL / localTotalInvested) * 100 : 0
+  
+  // Total market cap
+  const totalMarketCap = marketData.reduce((sum, c) => sum + (c.marketCap || 0), 0)
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+  
+  return (
+    <div className="space-y-6">
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'market' | 'portfolio' | 'cointracking')}>
+        <TabsList className="grid w-full grid-cols-3 max-w-lg">
+          <TabsTrigger value="market" className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            Mercado
+          </TabsTrigger>
+          <TabsTrigger value="portfolio" className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" />
+            Portfolio
+          </TabsTrigger>
+          <TabsTrigger value="cointracking" className="flex items-center gap-2">
+            <Bitcoin className="w-4 h-4" />
+            Cointracking
+          </TabsTrigger>
+        </TabsList>
+        
+        {/* Market Tab - CoinGecko Real-time Prices */}
+        <TabsContent value="market" className="space-y-6">
+          {/* Summary Card */}
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-green-500" />
+                    Top 50 Criptomonedas
+                  </h2>
+                  <p className="text-muted-foreground">Precios en tiempo real vía CoinGecko</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Capitalización total: {formatCurrency(totalMarketCap)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={handleRefreshMarket} disabled={refreshing || marketLoading}>
+                    <RefreshCw className={`w-4 h-4 mr-2 ${refreshing || marketLoading ? 'animate-spin' : ''}`} />
+                    Actualizar
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* Market Table */}
+          <Card>
+            <CardContent className="p-0">
+              {marketLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="text-left p-4 font-medium">#</th>
+                        <th className="text-left p-4 font-medium">Nombre</th>
+                        <th className="text-right p-4 font-medium">Precio</th>
+                        <th className="text-right p-4 font-medium">24h %</th>
+                        <th className="text-right p-4 font-medium hidden md:table-cell">7d %</th>
+                        <th className="text-right p-4 font-medium hidden lg:table-cell">Cap. Mercado</th>
+                        <th className="text-right p-4 font-medium hidden lg:table-cell">Volumen 24h</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {marketData.map((crypto) => (
+                        <tr key={crypto.id} className="border-t hover:bg-muted/30 transition-colors">
+                          <td className="p-4 text-muted-foreground">{crypto.marketCapRank}</td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <img src={crypto.image} alt={crypto.name} className="w-8 h-8 rounded-full" />
+                              <div>
+                                <p className="font-semibold">{crypto.name}</p>
+                                <p className="text-xs text-muted-foreground">{crypto.symbol.toUpperCase()}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4 text-right font-medium">{formatCurrency(crypto.currentPrice)}</td>
+                          <td className="p-4 text-right">
+                            <span className={`font-medium ${crypto.priceChangePercentage24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatPercent(crypto.priceChangePercentage24h)}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right hidden md:table-cell">
+                            <span className={`font-medium ${crypto.priceChangePercentage7d >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatPercent(crypto.priceChangePercentage7d)}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right hidden lg:table-cell">{formatCurrency(crypto.marketCap)}</td>
+                          <td className="p-4 text-right hidden lg:table-cell">{formatCurrency(crypto.totalVolume)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        {/* Portfolio Tab - Manual Assets */}
+        <TabsContent value="portfolio" className="space-y-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Mi Portfolio</h2>
+                  <p className="text-3xl font-bold">{formatCurrency(localTotalValue)}</p>
+                  <p className={`text-sm ${localTotalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    P&L: {formatCurrency(localTotalPnL)} ({formatPercent(localTotalPnLPercent)})
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={handleRefreshPrices} disabled={refreshing}>
+                    <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                    Actualizar Precios
+                  </Button>
+                  <AddAssetDialog type="crypto" onAdded={fetchAssets} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {assets.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <Wallet className="w-12 h-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground mb-4">No tienes activos en tu portfolio</p>
+                <AddAssetDialog type="crypto" onAdded={fetchAssets} />
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {assets.map(asset => (
+                <AssetCard 
+                  key={asset.id} 
+                  asset={asset} 
+                  onUpdated={fetchAssets} 
+                  onDeleted={fetchAssets}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+        
+        {/* Cointracking Tab */}
+        <TabsContent value="cointracking" className="space-y-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Bitcoin className="w-5 h-5 text-orange-500" />
+                    Cointracking Portfolio
+                  </h2>
+                  {cointrackingData?.success && cointrackingData.summary ? (
+                    <>
+                      <p className="text-3xl font-bold">{formatCurrency(cointrackingData.summary.totalValueEUR)}</p>
+                      <p className={`text-sm ${cointrackingData.summary.totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        P&L Total: {formatCurrency(cointrackingData.summary.totalGainLoss)}
+                      </p>
+                    </>
+                  ) : cointrackingData?.error ? (
+                    <div className="mt-2">
+                      <p className="text-red-500 text-sm">{cointrackingData.error}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Verifica que tu cuenta tenga acceso a la API activa
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">Cargando datos...</p>
+                  )}
+                </div>
+                <Button variant="outline" onClick={handleSyncCointracking} disabled={syncing}>
+                  <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                  Sincronizar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {cointrackingData?.success && cointrackingData.summary?.items ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {cointrackingData.summary.items
+                .sort((a, b) => b.valueEUR - a.valueEUR)
+                .map((item, index) => (
+                  <Card key={index}>
+                    <CardContent className="p-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold">{item.symbol}</p>
+                          <p className="text-xs text-muted-foreground">{item.name}</p>
+                        </div>
+                        <Badge variant={item.gainLoss >= 0 ? 'default' : 'destructive'} className={item.gainLoss >= 0 ? 'bg-green-100 text-green-800' : ''}>
+                          {formatPercent(item.gainLossPercent)}
+                        </Badge>
+                      </div>
+                      <div className="mt-3 space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Cantidad:</span>
+                          <span>{item.amount.toLocaleString('es-ES', { maximumFractionDigits: 8 })}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Valor:</span>
+                          <span className="font-medium">{formatCurrency(item.valueEUR)}</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+            </div>
+          ) : null}
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
       } else {
         toast.error('Error al obtener precios')
       }
